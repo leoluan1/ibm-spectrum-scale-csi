@@ -861,7 +861,7 @@ func (cs *ScaleControllerServer) checkSnapshotSupport(conn connectors.SpectrumSc
 
 func (cs *ScaleControllerServer) checkVolCloneSupport(conn connectors.SpectrumScaleConnector) error {
         /* Verify Spectrum Scale Version is not below 5.1.2-1 */
-        versionCheck, err := cs.checkMinScaleVersion(conn, "5121")
+        versionCheck, err := cs.checkMinScaleVersion(conn, "5120")
         if err != nil {
                 return err
         }
