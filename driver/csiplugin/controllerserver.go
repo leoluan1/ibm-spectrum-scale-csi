@@ -215,7 +215,7 @@ func (cs *ScaleControllerServer) setQuota(scVol *scaleVolume) error {
 }
 
 //createFilesetBasedVol: Create fileset based volume  - return relative path of volume created
-func (cs *ScaleControllerServer) createFilesetBasedVol(scVol *scaleVolume) (string, error) { //nolint:gocyclo,funlen
+func (cs *ScaleControllerServer) createFilesetBasedVol(scVol *scaleVolume, isSnapSource bool, snapIdMembers scaleSnapId) (string, error) { //nolint:gocyclo,funlen
 	glog.V(4).Infof("volume: [%v] - ControllerServer:createFilesetBasedVol", scVol.VolName)
 	opt := make(map[string]interface{})
 
@@ -277,6 +277,11 @@ func (cs *ScaleControllerServer) createFilesetBasedVol(scVol *scaleVolume) (stri
 	}
 	if scVol.ParentFileset != "" {
 		opt[connectors.UserSpecifiedParentFset] = scVol.ParentFileset
+	}
+	snapSourcePath := fmt.Sprintf("%s/%s/.snapshots/%s", fsDetails.Mount.MountPoint, snapIdMembers.FsetName, snapIdMembers.SnapName)
+	glog.V(4).Infof("isSnapSource: [%v] snapSourcePath: [%v]", isSnapSource, snapSourcePath)
+	if isSnapSource {
+		opt[connectors.SourceSnapshot] = snapSourcePath
 	}
 
 	// Check if fileset exist
@@ -343,14 +348,22 @@ func (cs *ScaleControllerServer) createFilesetBasedVol(scVol *scaleVolume) (stri
 		}
 	}
 
-	targetBasePath, err := cs.getTargetPath(filesetInfo.Config.Path, fsDetails.Mount.MountPoint, scVol.VolName)
+	targetDir := ""
+	if isSnapSource {
+		targetDir = snapIdMembers.FsetName
+	} else {
+		targetDir = scVol.VolName
+	}
+	targetBasePath, err := cs.getTargetPath(filesetInfo.Config.Path, fsDetails.Mount.MountPoint, targetDir)
 	if err != nil {
 		return "", status.Error(codes.Internal, err.Error())
 	}
 
-	err = cs.createDirectory(scVol, targetBasePath)
-	if err != nil {
-		return "", status.Error(codes.Internal, err.Error())
+	if !isSnapSource {
+		err = cs.createDirectory(scVol, targetBasePath)
+		if err != nil {
+			return "", status.Error(codes.Internal, err.Error())
+		}
 	}
 
 	return targetBasePath, nil
@@ -586,7 +599,7 @@ func (cs *ScaleControllerServer) CreateVolume(ctx context.Context, req *csi.Crea
 			} else if jobStatus == VOLCOPY_JOB_FAILED {
 				glog.Errorf("volume:[%v] -  volume cloning job had failed", scaleVol.VolName)
 				return nil, status.Error(codes.Internal, fmt.Sprintf("volume cloning job had failed for volume:[%v]", scaleVol.VolName))
-                	} else if jobStatus == VOLCOPY_JOB_COMPLETED {
+			} else if jobStatus == VOLCOPY_JOB_COMPLETED {
 				glog.V(5).Infof("volume:[%v] -  volume cloning request has already completed successfully.", scaleVol.VolName)
 				return &csi.CreateVolumeResponse{
 					Volume: &csi.Volume{
@@ -648,7 +661,7 @@ func (cs *ScaleControllerServer) CreateVolume(ctx context.Context, req *csi.Crea
 	var targetPath string
 
 	if scaleVol.IsFilesetBased {
-		targetPath, err = cs.createFilesetBasedVol(scaleVol)
+		targetPath, err = cs.createFilesetBasedVol(scaleVol, isSnapSource, snapIdMembers)
 	} else {
 		targetPath, err = cs.createLWVol(scaleVol)
 	}
@@ -673,7 +686,7 @@ func (cs *ScaleControllerServer) CreateVolume(ctx context.Context, req *csi.Crea
 		}
 	}
 
-	if isSnapSource {
+	if isSnapSource && !scaleVol.IsFilesetBased {
 		err = cs.copySnapContent(scaleVol, snapIdMembers, volFsInfo, targetPath, volID)
 		if err != nil {
 			glog.Errorf("createVolume failed while copying snapshot content [%s]: [%v]", volName, err)
@@ -860,16 +873,16 @@ func (cs *ScaleControllerServer) checkSnapshotSupport(conn connectors.SpectrumSc
 }
 
 func (cs *ScaleControllerServer) checkVolCloneSupport(conn connectors.SpectrumScaleConnector) error {
-        /* Verify Spectrum Scale Version is not below 5.1.2-1 */
-        versionCheck, err := cs.checkMinScaleVersion(conn, "5120")
-        if err != nil {
-                return err
-        }
+	/* Verify Spectrum Scale Version is not below 5.1.2-1 */
+	versionCheck, err := cs.checkMinScaleVersion(conn, "5120")
+	if err != nil {
+		return err
+	}
 
-        if !versionCheck {
-                return status.Error(codes.FailedPrecondition, "the minimum required Spectrum Scale version for volume cloning support with CSI is 5.1.2-1")
-        }
-        return nil
+	if !versionCheck {
+		return status.Error(codes.FailedPrecondition, "the minimum required Spectrum Scale version for volume cloning support with CSI is 5.1.2-1")
+	}
+	return nil
 }
 
 func (cs *ScaleControllerServer) validateSnapId(sId *scaleSnapId, scVol *scaleVolume, pCid string) error {

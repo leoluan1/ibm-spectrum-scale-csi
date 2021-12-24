@@ -517,6 +517,13 @@ func (s *spectrumRestV2) CreateFileset(filesystemName string, filesetName string
 		filesetreq.Owner = fmt.Sprintf("%s", uid)
 	}
 
+	sourceSnapshot, sourceSnapshotSpecified := opts[SourceSnapshot]
+	if sourceSnapshotSpecified {
+		filesetreq.AfmMode = "lu"
+		afmTargetString := fmt.Sprintf("genericfs://%s", sourceSnapshot.(string))
+		filesetreq.AfmTarget = afmTargetString
+	}
+
 	createFilesetURL := utils.FormatURL(s.endpoint, fmt.Sprintf("scalemgmt/v2/filesystems/%s/filesets", filesystemName))
 	createFilesetResponse := GenericResponse{}
 
